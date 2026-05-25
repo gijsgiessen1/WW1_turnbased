@@ -51,6 +51,14 @@ TARGET_H        = 190
 ATTACK_FLASH_MS = 100
 DEAD_FRAME_MS   = 180   # ms per death animation frame
 
+# ── Layout ─────────────────────────────────────────────────
+GROUND_Y     = 420
+TRENCH_W     = 150
+TRENCH_DEPTH = 55
+COVER_SINK   = 48    # px soldier sinks when in cover
+P1_X         = 130
+P2_X         = 770
+
 idle_right,   idle_left,   UNIT_W   = load_sprite('sprite_idle.png',   TARGET_H)
 attack_right, attack_left, ATTACK_W = load_sprite('sprite_attack.png', TARGET_H)
 
@@ -58,6 +66,77 @@ attack_right, attack_left, ATTACK_W = load_sprite('sprite_attack.png', TARGET_H)
 dead_frames = []   # list of (right_surf, left_surf, width)
 for i in range(1, 5):
     dead_frames.append(load_sprite(f'sprite_dead_{i}.png', TARGET_H))
+
+
+# ==========================================================
+#  Scene drawing
+# ==========================================================
+def draw_dead_tree(surface, x, h, seed):
+    rng  = random.Random(seed)
+    col  = (52, 42, 34)
+    col2 = (44, 35, 28)
+    tx   = x + rng.randint(-4, 4)
+    base = GROUND_Y - 2
+    pygame.draw.line(surface, col, (tx, base), (tx, base - h), 5)
+    for _ in range(rng.randint(3, 5)):
+        bh  = rng.randint(h // 4, h * 3 // 4)
+        by  = base - bh
+        dx  = rng.choice([-1, 1]) * rng.randint(22, 58)
+        dy  = -rng.randint(5, 22)
+        pygame.draw.line(surface, col, (tx, by), (tx + dx, by + dy), 3)
+        for _ in range(rng.randint(1, 3)):
+            sdx = rng.randint(-18, 18)
+            sdy = -rng.randint(4, 18)
+            pygame.draw.line(surface, col2, (tx + dx, by + dy),
+                             (tx + dx + sdx, by + dy + sdy), 2)
+
+
+def draw_trench_pit(surface, cx):
+    pygame.draw.rect(surface, (24, 32, 18),
+        (cx - TRENCH_W // 2, GROUND_Y - 6, TRENCH_W, TRENCH_DEPTH + 10),
+        border_radius=6)
+    # inner shadow
+    pygame.draw.rect(surface, (18, 24, 14),
+        (cx - TRENCH_W // 2 + 6, GROUND_Y + 10, TRENCH_W - 12, TRENCH_DEPTH - 5),
+        border_radius=4)
+
+
+def draw_sandbags(surface, cx):
+    sb_y = GROUND_Y - 10
+    # bottom row
+    for i in range(5):
+        sx = cx - TRENCH_W // 2 + 4 + i * 28
+        pygame.draw.ellipse(surface, (108, 88, 62), (sx, sb_y, 30, 19))
+        pygame.draw.ellipse(surface, (88, 70, 48), (sx, sb_y, 30, 19), 1)
+    # top row (offset)
+    for i in range(4):
+        sx = cx - TRENCH_W // 2 + 18 + i * 28
+        pygame.draw.ellipse(surface, (98, 80, 56), (sx, sb_y - 13, 30, 19))
+        pygame.draw.ellipse(surface, (80, 62, 42), (sx, sb_y - 13, 30, 19), 1)
+
+
+def draw_scene(surface):
+    # Sky — dark overcast WWI palette
+    surface.fill((36, 40, 52))
+    pygame.draw.rect(surface, (44, 50, 42), (0, 280, WIDTH, 145))   # murky horizon band
+
+    # Far ground mud
+    pygame.draw.rect(surface, (36, 50, 28), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+    # Subtle mud ruts
+    for rx in range(0, WIDTH, 55):
+        pygame.draw.line(surface, (30, 42, 22), (rx, GROUND_Y + 8), (rx + 30, GROUND_Y + 8), 1)
+
+    # Dead trees (drawn before units so they stay behind)
+    tree_specs = [(310, 105, 1), (390, 88, 2), (450, 118, 3), (530, 92, 4), (600, 108, 5)]
+    for tx, th, seed in tree_specs:
+        draw_dead_tree(surface, tx, th, seed)
+
+    # Ground line
+    pygame.draw.line(surface, (62, 88, 48), (0, GROUND_Y), (WIDTH, GROUND_Y), 2)
+
+    # Trench pits (before soldiers so units appear IN FRONT and sinking into them)
+    draw_trench_pit(surface, P1_X)
+    draw_trench_pit(surface, P2_X)
 
 
 # ==========================================================
@@ -155,20 +234,17 @@ class Unit:
             img = idle_left if self.facing_left else idle_right
             w   = UNIT_W
 
-        rect = img.get_rect(centerx=self.x, bottom=self.y)
+        # Sink soldier into trench when in cover (not while dying)
+        draw_y = self.y + (COVER_SINK if self.in_cover and not self.is_dying else 0)
 
-        if self.in_cover and not self.is_dying:
-            glow = pygame.Surface((w + 12, TARGET_H + 6), pygame.SRCALPHA)
-            pygame.draw.rect(glow, (*COVER_COL, 55), glow.get_rect(), border_radius=12)
-            surface.blit(glow, (self.x - w // 2 - 6, self.y - TARGET_H - 3))
-
+        rect = img.get_rect(centerx=self.x, bottom=draw_y)
         surface.blit(img, rect)
 
         if not self.is_dying:
             ns = font_med.render(self.name, True, WHITE)
             ts = font_tiny.render(self.unit_type, True, GRAY)
-            surface.blit(ns, (self.x - ns.get_width() // 2, self.y + 4))
-            surface.blit(ts, (self.x - ts.get_width() // 2, self.y + 26))
+            surface.blit(ns, (self.x - ns.get_width() // 2, draw_y + 4))
+            surface.blit(ts, (self.x - ts.get_width() // 2, draw_y + 26))
 
     def draw_panel(self, surface, px, py, label, lc):
         W, H = 195, 132
@@ -270,8 +346,8 @@ def run_menu():
 #  Game session
 # ==========================================================
 def make_units():
-    p1 = Unit('Rifleman', 'Basic Infantry', 195, 405, facing_left=False)
-    p2 = Unit('Rifleman', 'Basic Infantry', 705, 405, facing_left=True)
+    p1 = Unit('Rifleman', 'Basic Infantry', P1_X, GROUND_Y, facing_left=False)
+    p2 = Unit('Rifleman', 'Basic Infantry', P2_X, GROUND_Y, facing_left=True)
     return p1, p2
 
 
@@ -337,6 +413,7 @@ def run_game(mode):
                 game_over     = True
                 log = [pending_result, '[R] restart   [M] menu']
 
+
         # AI turn - blocked while death is playing
         if mode == 'sp' and turn == 2 and not game_over and not death_pending:
             ai_timer += dt
@@ -363,14 +440,18 @@ def run_game(mode):
         p1.update(dt)
         p2.update(dt)
 
-        # Draw
-        screen.fill(DARK_BG)
-        pygame.draw.rect(screen, (35, 50, 30), (0, 415, WIDTH, HEIGHT - 415))
-        pygame.draw.line(screen, (60, 90, 50), (0, 415), (WIDTH, 415), 2)
+        # Draw background, trees, trench pits
+        draw_scene(screen)
 
+        # Draw units (sink into trench when in cover)
         p1.draw(screen)
         p2.draw(screen)
 
+        # Sandbags on top of units for in-trench illusion
+        draw_sandbags(screen, P1_X)
+        draw_sandbags(screen, P2_X)
+
+        # Stat panels
         p1_label = 'You'      if mode == 'sp' else 'Player 1'
         p2_label = 'AI'       if mode == 'sp' else 'Player 2'
         p1.draw_panel(screen, 10,          10, p1_label, LIGHT_BLUE)
